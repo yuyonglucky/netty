@@ -30,14 +30,14 @@ import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-import static io.netty.util.internal.ObjectUtil.checkNotNull;
 import static io.netty.util.internal.MathUtil.isOutOfBounds;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
 
 /**
  * A string which has been encoded into a character encoding whose character always takes a single byte, similarly to
  * ASCII. It internally keeps its content in a byte array unlike {@link String}, which uses a character array, for
  * reduced memory footprint and faster data transfer from/to byte-based data structures such as a byte array and
- * {@link ByteBuffer}. It is often used in conjunction with {@link TextHeaders}.
+ * {@link ByteBuffer}. It is often used in conjunction with {@link Headers} that require a {@link CharSequence}.
  * <p>
  * This class was designed to provide an immutable array of bytes, and caches some internal state based upon the value
  * of this array. However underlying access to this byte array is provided via not copying the array on construction or
@@ -47,7 +47,8 @@ import static io.netty.util.internal.MathUtil.isOutOfBounds;
 public final class AsciiString implements CharSequence, Comparable<CharSequence> {
     public static final AsciiString EMPTY_STRING = new AsciiString("");
     private static final char MAX_CHAR_VALUE = 255;
-    private static final int HASH_CODE_PRIME = 31;
+
+    public static final int INDEX_NOT_FOUND = -1;
 
     /**
      * If this value is modified outside the constructor then call {@link #arrayChanged()}.
@@ -1085,27 +1086,17 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
         return res.toArray(new AsciiString[res.size()]);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Provides a case-insensitive hash code for Ascii like byte strings.
+     */
     @Override
     public int hashCode() {
-        int h = hash;
-        if (h == 0) {
-            final int end = arrayOffset() + length();
-            for (int i = arrayOffset(); i < end; ++i) {
-                // masking with 0x1F reduces the number of overall bits that impact the hash code but makes the hash
-                // code the same regardless of character case (upper case or lower case hash is the same).
-                h = h * HASH_CODE_PRIME + (value[i] & 0x1F);
-            }
-
-            hash = h;
+        if (hash == 0) {
+            hash = PlatformDependent.hashCodeAscii(value, offset, length);
         }
         return hash;
-    }
-
-    /**
-     * Generate a hash code that will be consistent regardless of ASCII character casing.
-     */
-    public int hashCodeCaseInsensitive() {
-        return hashCode();
     }
 
     @Override
@@ -1118,9 +1109,9 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
         }
 
         AsciiString other = (AsciiString) obj;
-        return hashCode() == other.hashCode() &&
-               PlatformDependent.equals(array(), arrayOffset(), arrayOffset() + length(),
-                                        other.array(), other.arrayOffset(), other.arrayOffset() + other.length());
+        return length() == other.length() &&
+               hashCode() == other.hashCode() &&
+               PlatformDependent.equals(array(), arrayOffset(), other.array(), other.arrayOffset(), length());
     }
 
     /**
@@ -1336,7 +1327,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
             new HashingStrategy<CharSequence>() {
         @Override
         public int hashCode(CharSequence o) {
-            return AsciiString.caseInsensitiveHashCode(o);
+            return AsciiString.hashCode(o);
         }
 
         @Override
@@ -1344,6 +1335,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
             return AsciiString.contentEqualsIgnoreCase(a, b);
         }
     };
+
     public static final HashingStrategy<CharSequence> CASE_SENSITIVE_HASHER =
             new HashingStrategy<CharSequence>() {
         @Override
@@ -1368,27 +1360,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
     /**
      * Returns the case-insensitive hash code of the specified string. Note that this method uses the same hashing
      * algorithm with {@link #hashCode()} so that you can put both {@link AsciiString}s and arbitrary
-     * {@link CharSequence}s into the same {@link TextHeaders}.
-     */
-    public static int caseInsensitiveHashCode(CharSequence value) {
-        if (value == null) {
-            return 0;
-        }
-        if (value.getClass() == AsciiString.class) {
-            return ((AsciiString) value).hashCodeCaseInsensitive();
-        }
-
-        int hash = 0;
-        for (int i = 0; i < value.length(); ++i) {
-            hash = hash * HASH_CODE_PRIME + (value.charAt(i) & 0x1F);
-        }
-        return hash;
-    }
-
-    /**
-     * A case-sensitive version of {@link caseInsensitiveHashCode(CharSequence)}.
-     * @param value
-     * @return
+     * {@link CharSequence}s into the same headers.
      */
     public static int hashCode(CharSequence value) {
         if (value == null) {
@@ -1398,11 +1370,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
             return ((AsciiString) value).hashCode();
         }
 
-        int hash = 0;
-        for (int i = 0; i < value.length(); ++i) {
-            hash = hash * HASH_CODE_PRIME + (value.charAt(i) & 0x1F);
-        }
-        return hash;
+        return PlatformDependent.hashCodeAscii(value);
     }
 
     /**
@@ -1416,7 +1384,7 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
      * Determine if {@code a} contains {@code b} in a case insensitive manner.
      */
     public static boolean containsIgnoreCase(CharSequence a, CharSequence b) {
-        return contains(a, b, CaseInsensativeCharEqualityComparator.INSTANCE);
+        return contains(a, b, AsciiCaseInsensitiveCharEqualityComparator.INSTANCE);
     }
 
     /**
@@ -1531,13 +1499,27 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
         }
     }
 
-    private static final class CaseInsensativeCharEqualityComparator implements CharEqualityComparator {
-        static final CaseInsensativeCharEqualityComparator INSTANCE = new CaseInsensativeCharEqualityComparator();
-        private CaseInsensativeCharEqualityComparator() { }
+    private static final class AsciiCaseInsensitiveCharEqualityComparator implements CharEqualityComparator {
+        static final AsciiCaseInsensitiveCharEqualityComparator
+                INSTANCE = new AsciiCaseInsensitiveCharEqualityComparator();
+        private AsciiCaseInsensitiveCharEqualityComparator() { }
 
         @Override
         public boolean equals(char a, char b) {
             return equalsIgnoreCase(a, b);
+        }
+    }
+
+    private static final class GeneralCaseInsensitiveCharEqualityComparator implements CharEqualityComparator {
+        static final GeneralCaseInsensitiveCharEqualityComparator
+                INSTANCE = new GeneralCaseInsensitiveCharEqualityComparator();
+        private GeneralCaseInsensitiveCharEqualityComparator() { }
+
+        @Override
+        public boolean equals(char a, char b) {
+            //For motivation, why we need two checks, see comment in String#regionMatches
+            return Character.toUpperCase(a) == Character.toUpperCase(b) ||
+                Character.toLowerCase(a) == Character.toLowerCase(b);
         }
     }
 
@@ -1563,6 +1545,201 @@ public final class AsciiString implements CharSequence, Comparable<CharSequence>
             }
         }
         return false;
+    }
+
+    private static boolean regionMatchesCharSequences(final CharSequence cs, final int csStart,
+                                         final CharSequence string, final int start, final int length,
+                                         CharEqualityComparator charEqualityComparator) {
+        //general purpose implementation for CharSequences
+        if (csStart < 0 || length > cs.length() - csStart) {
+            return false;
+        }
+        if (start < 0 || length > string.length() - start) {
+            return false;
+        }
+
+        int csIndex = csStart;
+        int csEnd = csIndex + length;
+        int stringIndex = start;
+
+        while (csIndex < csEnd) {
+            char c1 = cs.charAt(csIndex++);
+            char c2 = string.charAt(stringIndex++);
+
+            if (!charEqualityComparator.equals(c1, c2)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * This methods make regionMatches operation correctly for any chars in strings
+     * @param cs the {@code CharSequence} to be processed
+     * @param ignoreCase specifies if case should be ignored.
+     * @param csStart the starting offset in the {@code cs} CharSequence
+     * @param string the {@code CharSequence} to compare.
+     * @param start the starting offset in the specified {@code string}.
+     * @param length the number of characters to compare.
+     * @return {@code true} if the ranges of characters are equal, {@code false} otherwise.
+     */
+    public static boolean regionMatches(final CharSequence cs, final boolean ignoreCase, final int csStart,
+                                        final CharSequence string, final int start, final int length) {
+        if (cs == null || string == null) {
+            return false;
+        }
+
+        if (cs instanceof String && string instanceof String) {
+            return ((String) cs).regionMatches(ignoreCase, csStart, (String) string, start, length);
+        }
+
+        if (cs instanceof AsciiString) {
+            return ((AsciiString) cs).regionMatches(ignoreCase, csStart, string, start, length);
+        }
+
+        return regionMatchesCharSequences(cs, csStart, string, start, length,
+                                            ignoreCase ? GeneralCaseInsensitiveCharEqualityComparator.INSTANCE :
+                                                    DefaultCharEqualityComparator.INSTANCE);
+    }
+
+    /**
+     * This is optimized version of regionMatches for string with ASCII chars only
+     * @param cs the {@code CharSequence} to be processed
+     * @param ignoreCase specifies if case should be ignored.
+     * @param csStart the starting offset in the {@code cs} CharSequence
+     * @param string the {@code CharSequence} to compare.
+     * @param start the starting offset in the specified {@code string}.
+     * @param length the number of characters to compare.
+     * @return {@code true} if the ranges of characters are equal, {@code false} otherwise.
+     */
+    public static boolean regionMatchesAscii(final CharSequence cs, final boolean ignoreCase, final int csStart,
+                                        final CharSequence string, final int start, final int length) {
+        if (cs == null || string == null) {
+            return false;
+        }
+
+        if (!ignoreCase && cs instanceof String && string instanceof String) {
+            //we don't call regionMatches from String for ignoreCase==true. It's a general purpose method,
+            //which make complex comparison in case of ignoreCase==true, which is useless for ASCII-only strings.
+            //To avoid applying this complex ignore-case comparison, we will use regionMatchesCharSequences
+            return ((String) cs).regionMatches(false, csStart, (String) string, start, length);
+        }
+
+        if (cs instanceof AsciiString) {
+            return ((AsciiString) cs).regionMatches(ignoreCase, csStart, string, start, length);
+        }
+
+        return regionMatchesCharSequences(cs, csStart, string, start, length,
+                                          ignoreCase ? AsciiCaseInsensitiveCharEqualityComparator.INSTANCE :
+                                                      DefaultCharEqualityComparator.INSTANCE);
+    }
+
+    /**
+     * <p>Case in-sensitive find of the first index within a CharSequence
+     * from the specified position.</p>
+     *
+     * <p>A {@code null} CharSequence will return {@code -1}.
+     * A negative start position is treated as zero.
+     * An empty ("") search CharSequence always matches.
+     * A start position greater than the string length only matches
+     * an empty search CharSequence.</p>
+     *
+     * <pre>
+     * AsciiString.indexOfIgnoreCase(null, *, *)          = -1
+     * AsciiString.indexOfIgnoreCase(*, null, *)          = -1
+     * AsciiString.indexOfIgnoreCase("", "", 0)           = 0
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "A", 0)  = 0
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 0)  = 2
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "AB", 0) = 1
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 3)  = 5
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 9)  = -1
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", -1) = 2
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "", 2)   = 2
+     * AsciiString.indexOfIgnoreCase("abc", "", 9)        = -1
+     * </pre>
+     *
+     * @param str  the CharSequence to check, may be null
+     * @param searchStr  the CharSequence to find, may be null
+     * @param startPos  the start position, negative treated as zero
+     * @return the first index of the search CharSequence (always &ge; startPos),
+     *  -1 if no match or {@code null} string input
+     * @throws NullPointerException if {@code cs} or {@code string} is {@code null}.
+     */
+    public static int indexOfIgnoreCase(final CharSequence str, final CharSequence searchStr, int startPos) {
+        if (str == null || searchStr == null) {
+            return INDEX_NOT_FOUND;
+        }
+        if (startPos < 0) {
+            startPos = 0;
+        }
+        int searchStrLen = searchStr.length();
+        final int endLimit = str.length() - searchStrLen + 1;
+        if (startPos > endLimit) {
+            return INDEX_NOT_FOUND;
+        }
+        if (searchStrLen == 0) {
+            return startPos;
+        }
+        for (int i = startPos; i < endLimit; i++) {
+            if (regionMatches(str, true, i, searchStr, 0, searchStrLen)) {
+                return i;
+            }
+        }
+        return INDEX_NOT_FOUND;
+    }
+
+    /**
+     * <p>Case in-sensitive find of the first index within a CharSequence
+     * from the specified position. This method optimized and works correctly for ASCII CharSequences only</p>
+     *
+     * <p>A {@code null} CharSequence will return {@code -1}.
+     * A negative start position is treated as zero.
+     * An empty ("") search CharSequence always matches.
+     * A start position greater than the string length only matches
+     * an empty search CharSequence.</p>
+     *
+     * <pre>
+     * AsciiString.indexOfIgnoreCase(null, *, *)          = -1
+     * AsciiString.indexOfIgnoreCase(*, null, *)          = -1
+     * AsciiString.indexOfIgnoreCase("", "", 0)           = 0
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "A", 0)  = 0
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 0)  = 2
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "AB", 0) = 1
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 3)  = 5
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", 9)  = -1
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "B", -1) = 2
+     * AsciiString.indexOfIgnoreCase("aabaabaa", "", 2)   = 2
+     * AsciiString.indexOfIgnoreCase("abc", "", 9)        = -1
+     * </pre>
+     *
+     * @param str  the CharSequence to check, may be null
+     * @param searchStr  the CharSequence to find, may be null
+     * @param startPos  the start position, negative treated as zero
+     * @return the first index of the search CharSequence (always &ge; startPos),
+     *  -1 if no match or {@code null} string input
+     * @throws NullPointerException if {@code cs} or {@code string} is {@code null}.
+     */
+    public static int indexOfIgnoreCaseAscii(final CharSequence str, final CharSequence searchStr, int startPos) {
+        if (str == null || searchStr == null) {
+            return INDEX_NOT_FOUND;
+        }
+        if (startPos < 0) {
+            startPos = 0;
+        }
+        int searchStrLen = searchStr.length();
+        final int endLimit = str.length() - searchStrLen + 1;
+        if (startPos > endLimit) {
+            return INDEX_NOT_FOUND;
+        }
+        if (searchStrLen == 0) {
+            return startPos;
+        }
+        for (int i = startPos; i < endLimit; i++) {
+            if (regionMatchesAscii(str, true, i, searchStr, 0, searchStrLen)) {
+                return i;
+            }
+        }
+        return INDEX_NOT_FOUND;
     }
 
     private static boolean equalsIgnoreCase(byte a, byte b) {

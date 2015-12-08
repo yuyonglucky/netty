@@ -178,14 +178,9 @@ public class HttpClientUpgradeHandler extends HttpObjectAggregator {
             }
 
             CharSequence upgradeHeader = response.headers().get(HttpHeaderNames.UPGRADE);
-            if (upgradeHeader == null) {
+            if (upgradeHeader != null && !AsciiString.contentEqualsIgnoreCase(upgradeCodec.protocol(), upgradeHeader)) {
                 throw new IllegalStateException(
-                        "Switching Protocols response missing UPGRADE header");
-            }
-            if (!AsciiString.contentEqualsIgnoreCase(upgradeCodec.protocol(), upgradeHeader)) {
-                throw new IllegalStateException(
-                        "Switching Protocols response with unexpected UPGRADE protocol: "
-                                + upgradeHeader);
+                        "Switching Protocols response with unexpected UPGRADE protocol: " + upgradeHeader);
             }
 
             // Upgrade to the new protocol.
@@ -228,7 +223,7 @@ public class HttpClientUpgradeHandler extends HttpObjectAggregator {
             builder.append(part);
             builder.append(',');
         }
-        builder.append(HttpHeaderNames.UPGRADE);
+        builder.append(HttpHeaderValues.UPGRADE);
         request.headers().set(HttpHeaderNames.CONNECTION, builder.toString());
     }
 }

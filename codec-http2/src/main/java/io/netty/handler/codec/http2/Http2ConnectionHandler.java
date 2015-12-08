@@ -14,6 +14,24 @@
  */
 package io.netty.handler.codec.http2;
 
+import static io.netty.buffer.ByteBufUtil.hexDump;
+import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_STREAM_ID;
+import static io.netty.handler.codec.http2.Http2CodecUtil.connectionPrefaceBuf;
+import static io.netty.handler.codec.http2.Http2CodecUtil.getEmbeddedHttp2Exception;
+import static io.netty.handler.codec.http2.Http2Error.INTERNAL_ERROR;
+import static io.netty.handler.codec.http2.Http2Error.NO_ERROR;
+import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
+import static io.netty.handler.codec.http2.Http2Exception.connectionError;
+import static io.netty.handler.codec.http2.Http2Exception.isStreamError;
+import static io.netty.handler.codec.http2.Http2FrameTypes.SETTINGS;
+import static io.netty.handler.codec.http2.Http2Stream.State.IDLE;
+import static io.netty.util.CharsetUtil.UTF_8;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+import static java.lang.Math.min;
+import static java.lang.String.format;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.ChannelFuture;
@@ -30,23 +48,6 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-
-import static io.netty.buffer.ByteBufUtil.hexDump;
-import static io.netty.handler.codec.http2.Http2CodecUtil.HTTP_UPGRADE_STREAM_ID;
-import static io.netty.handler.codec.http2.Http2CodecUtil.connectionPrefaceBuf;
-import static io.netty.handler.codec.http2.Http2CodecUtil.getEmbeddedHttp2Exception;
-import static io.netty.handler.codec.http2.Http2Error.INTERNAL_ERROR;
-import static io.netty.handler.codec.http2.Http2Error.NO_ERROR;
-import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
-import static io.netty.handler.codec.http2.Http2Exception.connectionError;
-import static io.netty.handler.codec.http2.Http2Exception.isStreamError;
-import static io.netty.handler.codec.http2.Http2FrameTypes.SETTINGS;
-import static io.netty.util.CharsetUtil.UTF_8;
-import static io.netty.util.internal.ObjectUtil.checkNotNull;
-import static java.lang.Math.min;
-import static java.lang.String.format;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Provides the default implementation for processing inbound frame events and delegates to a
@@ -738,7 +739,8 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
      * @param cause the exception that was caught
      * @param http2Ex the {@link StreamException} that is embedded in the causality chain.
      */
-    protected void onStreamError(ChannelHandlerContext ctx, Throwable cause, StreamException http2Ex) {
+    protected void onStreamError(ChannelHandlerContext ctx, @SuppressWarnings("unused") Throwable cause,
+                                 StreamException http2Ex) {
         resetStream(ctx, http2Ex.streamId(), http2Ex.error().code(), ctx.newPromise());
     }
 
@@ -755,7 +757,14 @@ public class Http2ConnectionHandler extends ByteToMessageDecoder implements Http
             return promise.setSuccess();
         }
 
-        ChannelFuture future = frameWriter().writeRstStream(ctx, streamId, errorCode, promise);
+        final ChannelFuture future;
+        if (stream.state() == IDLE || (connection().local().created(stream) && !stream.isHeaderSent())) {
+            // The other endpoint doesn't know about the stream yet, so we can't actually send
+            // the RST_STREAM frame. The HTTP/2 spec also disallows sending RST_STREAM for IDLE streams.
+            future = promise.setSuccess();
+        } else {
+            future = frameWriter().writeRstStream(ctx, streamId, errorCode, promise);
+        }
 
         // Synchronously set the resetSent flag to prevent any subsequent calls
         // from resulting in multiple reset frames being sent.

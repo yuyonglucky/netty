@@ -16,15 +16,23 @@
 package io.netty.handler.codec.http;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.util.AsciiString;
+import io.netty.util.CharsetUtil;
 
 import java.net.URI;
+import java.nio.charset.Charset;
+import java.nio.charset.UnsupportedCharsetException;
 import java.util.Iterator;
 import java.util.List;
+
+import static io.netty.util.AsciiString.c2b;
 
 /**
  * Utility methods useful in the HTTP context.
  */
 public final class HttpUtil {
+    private static final AsciiString CHARSET_EQUALS = AsciiString.of(HttpHeaderValues.CHARSET + "=");
+
     private HttpUtil() { }
 
     /**
@@ -188,7 +196,7 @@ public final class HttpUtil {
      *         a number. Not to exceed the boundaries of integer.
      */
     public static int getContentLength(HttpMessage message, int defaultValue) {
-        return (int) Math.min(Integer.MAX_VALUE, HttpHeaderUtil.getContentLength(message, (long) defaultValue));
+        return (int) Math.min(Integer.MAX_VALUE, HttpUtil.getContentLength(message, (long) defaultValue));
     }
 
     /**
@@ -313,14 +321,61 @@ public final class HttpUtil {
         }
     }
 
+    /**
+     * Fetch charset from message's Content-Type header.
+     *
+     * @return the charset from message's Content-Type header or {@link io.netty.util.CharsetUtil#ISO_8859_1}
+     * if charset is not presented or unparsable
+     */
+    public static Charset getCharset(HttpMessage message) {
+        return getCharset(message, CharsetUtil.ISO_8859_1);
+    }
+
+    /**
+     * Fetch charset from message's Content-Type header.
+     *
+     * @return the charset from message's Content-Type header or {@code defaultCharset}
+     * if charset is not presented or unparsable
+     */
+    public static Charset getCharset(HttpMessage message, Charset defaultCharset) {
+        CharSequence charsetCharSequence = getCharsetAsString(message);
+        if (charsetCharSequence != null) {
+            try {
+                return Charset.forName(charsetCharSequence.toString());
+            } catch (UnsupportedCharsetException unsupportedException) {
+                return defaultCharset;
+            }
+        } else {
+            return defaultCharset;
+        }
+    }
+
+    /**
+     * Fetch charset string from message's Content-Type header.
+     *
+     * A lot of sites/possibly clients have charset="CHARSET", for example charset="utf-8". Or "utf8" instead of "utf-8"
+     * This is not according to standard, but this method provide an ability to catch desired mistakes manually in code
+     *
+     * @return the charset string from message's Content-Type header or {@code null} if charset is not presented
+     */
+    public static CharSequence getCharsetAsString(HttpMessage message) {
+        CharSequence contentTypeValue = message.headers().get(HttpHeaderNames.CONTENT_TYPE);
+        if (contentTypeValue != null) {
+            int indexOfCharset = AsciiString.indexOfIgnoreCaseAscii(contentTypeValue, CHARSET_EQUALS, 0);
+            if (indexOfCharset != AsciiString.INDEX_NOT_FOUND) {
+                int indexOfEncoding = indexOfCharset + CHARSET_EQUALS.length();
+                if (indexOfEncoding < contentTypeValue.length()) {
+                    return contentTypeValue.subSequence(indexOfEncoding, contentTypeValue.length());
+                }
+            }
+        }
+        return null;
+    }
+
     static void encodeAscii0(CharSequence seq, ByteBuf buf) {
         int length = seq.length();
         for (int i = 0 ; i < length; i++) {
             buf.writeByte(c2b(seq.charAt(i)));
         }
-    }
-
-    private static byte c2b(char c) {
-        return c > 255 ? (byte) '?' : (byte) c;
     }
 }

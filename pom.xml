@@ -122,7 +122,7 @@
       </modules>
     </profile>
     <!--
-      Netty must be released from RHEL 6.6 x86_64 or compatible so that:
+      Netty must be released from RHEL 6.7 x86_64 or compatible so that:
 
         1) we ship x86_64 version of epoll transport officially, and
         2) we ensure the ABI compatibility with older GLIBC versions.
@@ -153,12 +153,12 @@
                     </requireProperty>
                     <requireFilesContent>
                       <message>
-                        Release process must be performed on RHEL 6.6 or its derivatives.
+                        Release process must be performed on RHEL 6.7 or its derivatives.
                       </message>
                       <files>
                         <file>/etc/redhat-release</file>
                       </files>
-                      <content>release 6.6</content>
+                      <content>release 6.7</content>
                     </requireFilesContent>
                   </rules>
                 </configuration>
@@ -199,7 +199,7 @@
         <jdk>[1.8,)</jdk>
       </activation>
       <properties>
-        <jetty.alpn.version>8.1.4.v20150727</jetty.alpn.version>
+        <jetty.alpn.version>8.1.6.v20151105</jetty.alpn.version>
       </properties>
     </profile>
     <profile>
@@ -564,6 +564,30 @@
       </properties>
     </profile>
     <profile>
+      <id>alpn-8u60</id>
+      <activation>
+        <property>
+          <name>java.version</name>
+          <value>1.8.0_60</value>
+        </property>
+      </activation>
+      <properties>
+        <jetty.alpn.version>8.1.5.v20150921</jetty.alpn.version>
+      </properties>
+    </profile>
+    <profile>
+      <id>alpn-8u65</id>
+      <activation>
+        <property>
+          <name>java.version</name>
+          <value>1.8.0_65</value>
+        </property>
+      </activation>
+      <properties>
+        <jetty.alpn.version>8.1.6.v20151105</jetty.alpn.version>
+      </properties>
+    </profile>
+    <profile>
       <!--
       This profile exists because either ALPN or NPN can exits on the class path at once, but not both.
       The JDK version is typically used to distinguish which should be used but there is some overlap
@@ -660,11 +684,6 @@
 
       <!-- SPDY and HTTP/2 - completely optional -->
       <dependency>
-        <groupId>com.twitter</groupId>
-        <artifactId>hpack</artifactId>
-        <version>v1.0.1</version>
-      </dependency>
-      <dependency>
         <groupId>org.eclipse.jetty.npn</groupId>
         <artifactId>npn-api</artifactId>
         <version>1.1.1.v20141010</version>
@@ -678,6 +697,7 @@
         <groupId>org.eclipse.jetty.alpn</groupId>
         <artifactId>alpn-api</artifactId>
         <version>1.1.2.v20150522</version>
+        <scope>provided</scope> <!-- Provided by alpn-boot -->
       </dependency>
       <dependency>
         <groupId>org.mortbay.jetty.alpn</groupId>
@@ -879,6 +899,14 @@
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-compress</artifactId>
         <version>1.9</version>
+        <scope>test</scope>
+      </dependency>
+
+      <!-- Test dependency used by http/2 hpack -->
+      <dependency>
+        <groupId>com.google.code.gson</groupId>
+        <artifactId>gson</artifactId>
+        <version>2.3.1</version>
         <scope>test</scope>
       </dependency>
 
